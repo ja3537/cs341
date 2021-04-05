@@ -1,0 +1,291 @@
+/********************
+ * Joseph Adams
+ * jpadams
+ *
+ * cs341L
+ * cache lab part A
+ * due 11/11/20
+ ********************/
+
+#include <stdio.h>
+#include <string.h>
+#include <getopt.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <math.h>
+#include "cachelab.h"
+
+int s;
+unsigned long S;
+int E;
+int b;
+char* trace;
+FILE* traceFile;
+
+int hits = 0;
+int misses = 0;
+int evictions = 0;
+
+char inst;
+unsigned long address;
+int size;
+unsigned long tag;
+unsigned long setIndex;
+
+
+typedef struct node{
+  unsigned long tag;
+  struct node* next;
+  struct node* previous;
+} node;
+
+node** set;
+
+unsigned long generateMask(int s){
+  unsigned long mask = 0;
+  for(int i = 0; i < s; i++){
+    mask <<= 1;
+    mask += 1;
+  }
+  return mask;
+}
+
+node* findTail(node* head){//finds tail of linked list
+
+  if(head == NULL) return head;
+  node* current = head;
+
+  while(current -> next != NULL) current = current -> next;
+
+  return current;
+}
+
+char search(node* head){ //looks for tag in list. If found, changes order so our tag is first.
+
+  if(head == NULL){
+    misses++;
+    //printf("miss\n");
+    return 0;
+  }
+
+  //printf("head tag is %lx\n", head->tag);
+  node* current = head;
+  while(current -> tag != tag){
+    if(current -> next == NULL){
+      misses++;
+      //printf("miss\n");
+      return 0;
+    }
+    current = current -> next;
+  } //only exits if tag has been found
+
+  hits++;
+  //printf("hit\n");
+
+  if(current == head) return 1; //tag already first
+
+  else if(current == findTail(head)){//node is tail
+    //printf("node is tail\n");
+    node* previous = current -> previous;
+    previous -> next = NULL;
+    head -> previous = current;
+    current -> next = head;
+  }
+
+  else{ //node is not head or tail
+    //printf("node is not head or tail\n");
+    node* previous = current -> previous;
+    //printf("previous has been set\n");
+    //if(previous == NULL) printf("Previous is NULL!\n");
+    node* next = current -> next;
+    //if(next == NULL) printf("next is NULL!\n");
+    //printf("next has been set\n");
+    previous -> next = next;
+    //printf("previous has a next\n");
+    next -> previous = previous;
+    //printf("next has a previous\n");
+    current -> previous = NULL;
+    //printf("current previous set to NULL\n");
+    current -> next = head;
+    head -> previous = current;
+    //printf("current next set to head\n");
+  }
+
+  set[setIndex] = current; //node is new head
+  //printf("search is done\n");
+  return 1;
+}
+
+int listLength(node* head){//returns length of a list
+  if(head == NULL) return 0;
+
+  int count = 1;
+  node* current = head;
+  while(current -> next != NULL){
+    count++;
+    current = current -> next;
+  }
+
+  return count;
+}
+
+
+
+void createNode(node* head){//creates node and adds to end of list
+  node* new = (node*) malloc(sizeof(node));
+  //printf("node created!\n");
+  if(new == NULL){
+    printf("MALLOC FAILURE!\n");
+    exit(0);
+  }
+  new -> tag = tag;
+
+  if(head != NULL){
+    new -> next = head;
+    head -> previous = new;
+  }
+  set[setIndex] = new;
+}
+
+void evictNode(node* head){
+  node* tail = findTail(head);
+  tail -> tag = tag;
+  if(tail -> previous != NULL){
+    node* previous = tail -> previous;
+    previous -> next = NULL;
+    tail -> previous = NULL;
+    tail -> next = head;
+    head -> previous = tail;
+  }
+  set[setIndex] = tail;
+  evictions++;
+  //printf("eviction\n");
+}
+
+void updateCache(){
+
+  node* head = set[setIndex];
+  if(!search(head)){
+    if(listLength(head) < E) createNode(head);
+    else evictNode(head);
+  }
+}
+
+void freeList(node* head){
+  if(head == NULL) return;
+  node* current = head -> next;
+  while(current != NULL){
+    node* next = current -> next;
+    current = NULL;
+    free(current);
+    //printf("current has been freed\n");
+    current = next;
+  }
+  free(head);
+  //printf("head has been freed\n");
+}
+
+void freeNodes(){
+  /*
+  for(int i = 0; i <= S; i++){
+    printf("freeing list\n");
+    freeList(set[i]);
+    //free(set[i]);
+  }
+  */
+  free(set);
+  //printf("set has been freed\n");
+}
+
+int main(int argc, char** argv){
+  char opt;
+  char hFlag = 0;
+  char sMissing = 1;
+  char EMissing = 1;
+  char bMissing = 1;
+  char tMissing = 1;
+
+  while((opt = getopt(argc, argv, "h:s:E:b:t:")) != -1){
+    switch(opt){
+    case 'h':
+      hFlag = 1;
+    case 's':
+      s = atoi(optarg);
+      sMissing = 0;
+      break;
+    case 'E':
+      E = atoi(optarg);
+      EMissing = 0;
+      break;
+    case 'b':
+      b = atoi(optarg);
+      bMissing = 0;
+      break;
+    case 't':
+      trace = optarg;
+      tMissing = 0;
+      break;
+    }
+  }
+
+  if(hFlag){
+    printf("Options:\n");
+    printf("  -h         Print this help message.\n");
+    printf("  -v         Optional verbose flag.\n");
+    printf("  -s <num>   Number of set index bits.\n");
+    printf("  -E <num>   Number of lines per set.\n");
+    printf("  -b <num>   Number of block offset bits.\n");
+    printf("  -t <file>  Trace file.\n\n");
+    printf("Examples:\n");
+    printf("  linux>  ./csim-ref -s 4 -E 1 -b 4 -t traces/yi.trace\n");
+    printf("  linux>  ./csim-ref -v -s 8 -E 2 -b 4 -t traces/yi.trace\n");
+  }
+  
+  if(sMissing || EMissing || bMissing || tMissing){ //check for all the flags
+    printf("A parameter is missing!\n");
+    return 0;
+  }
+
+  S = pow(2, s); //number of sets
+  set = malloc(S*sizeof(node*)); //allocate array where each entry is a set
+
+  
+    
+  
+  traceFile = fopen(trace, "r");
+  if(traceFile == NULL){
+    printf("No trace file found!\n");
+    return 0;
+  }
+
+  while(fscanf(traceFile, " %c %lx, %d", &inst, &address, &size) > 0){
+    if(inst == 'I') continue;
+
+    tag = address >> (s + b);
+    setIndex = (address >> b) & generateMask(s);
+
+    /*
+    printf("inst is: %c\n", inst);
+    printf("mask is: %lx\n", generateMask(s));
+    printf("address is: %lx\n", address);
+    printf("set index is: %lx\n", setIndex);
+    printf("tag is: %lx\n", tag);
+    */
+    /*
+    printf("instruction is: %c\n", inst);
+    printf("address is: %lu\n", address);
+    printf("size is: %d\n", size);
+    */
+
+    if(inst == 'M') updateCache();
+
+    updateCache();
+    
+  }
+      
+      
+    printSummary(hits, misses, evictions);
+    freeNodes();
+    fclose(traceFile);
+    return 0;
+}
